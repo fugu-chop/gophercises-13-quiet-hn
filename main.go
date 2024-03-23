@@ -116,6 +116,7 @@ func fetchStories(client *hn.Client, ids []int, numStories int) []item {
 	var stories []item
 
 	signal := make(chan bool)
+	defer close(signal)
 
 	for _, id := range ids {
 		go func(id int) {
@@ -127,14 +128,14 @@ func fetchStories(client *hn.Client, ids []int, numStories int) []item {
 			if isStoryLink(item) {
 				stories = append(stories, item)
 				if len(stories) >= numStories {
-					signal <- true
+					<-signal
 					return
 				}
 			}
 		}(id)
 	}
 
-	<-signal
+	signal <- true
 
 	return stories
 }
