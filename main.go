@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"quiet-hn/hn"
@@ -40,21 +41,6 @@ func handler(numStories int, tpl *template.Template) http.HandlerFunc {
 			http.Error(w, "Failed to load top stories", http.StatusInternalServerError)
 			return
 		}
-		// This is the point that is best to introduce concurrency
-		// I probably want to introduce a function so as to leave the client untouched
-		// Pass in a pointer to a client and a slice of items
-		// Let the function handle iteration
-		// Spawn goroutines. No need for channels?
-		// The client via #TopItems will fetch ~= 450 items
-		// We pull out 30 that match stories
-
-		// Fetching stories is the slow bit to use concurrency with
-		// Basically we want to keep spawning goroutines until our slice of items
-		// is len(30) of appropriate stories
-
-		// Keep in mind we need to preserve "order"
-		// Order appears to be by ID
-		// We might have to do some sorting post fetch
 
 		// How might caching work?
 		// Set a bool flag for making requests - stop requests from going through
@@ -75,11 +61,21 @@ func handler(numStories int, tpl *template.Template) http.HandlerFunc {
 		// 		}
 		// 	}
 		// }
-		stories := fetchStories(&client, ids, numStories)
-
-		slices.SortFunc(stories, func(a, b item) int {
-			return cmp.Compare(a.ID, b.ID)
+		unorderedStories := fetchStories(&client, ids)
+		slices.SortFunc(unorderedStories, func(a, b orderedItem) int {
+			return cmp.Compare(a.order, b.order)
 		})
+
+		var orderedItems []item
+		for _, story := range unorderedStories {
+			item := item{
+				story.Item,
+				story.Host,
+			}
+
+			orderedItems = append(orderedItems, item)
+		}
+		stories := orderedItems[:numStories]
 
 		data := templateData{
 			Stories: stories,
@@ -112,36 +108,54 @@ type item struct {
 	Host string
 }
 
+type orderedItem struct {
+	item
+	order int
+}
+
 type templateData struct {
 	Stories []item
 	Time    time.Duration
 }
 
-// We need to block the main goroutine from returning early
-func fetchStories(client *hn.Client, ids []int, numStories int) []item {
-	var stories []item
+func captureOrder(ids []int) map[int]int {
+	orderMap := map[int]int{}
+	for idx, id := range ids {
+		orderMap[id] = idx
+	}
 
-	signal := make(chan bool)
-	defer close(signal)
+	return orderMap
+}
+
+// The ids won't always be in the same order when provided
+// to this function. Need to create a new type in order to sort
+// by index
+func fetchStories(client *hn.Client, ids []int) []orderedItem {
+	order := captureOrder(ids)
+
+	var stories []orderedItem
+	var wg sync.WaitGroup
+	wg.Add(len(ids))
 
 	for _, id := range ids {
-		go func(id int) {
+		go func(id int, wg *sync.WaitGroup) {
+			defer wg.Done()
 			hnItem, err := client.GetItem(id)
 			if err != nil {
 				return
 			}
 			item := parseHNItem(hnItem)
 			if isStoryLink(item) {
-				stories = append(stories, item)
-				if len(stories) >= numStories {
-					<-signal
-					return
+				orderedItem := orderedItem{
+					item:  item,
+					order: order[item.ID],
 				}
+				stories = append(stories, orderedItem)
 			}
-		}(id)
+		}(id, &wg)
 	}
 
-	signal <- true
+	wg.Wait()
 
 	return stories
 }
