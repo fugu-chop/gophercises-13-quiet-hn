@@ -1,12 +1,14 @@
 package main
 
 import (
+	"cmp"
 	"flag"
 	"fmt"
 	"html/template"
 	"log"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -74,6 +76,10 @@ func handler(numStories int, tpl *template.Template) http.HandlerFunc {
 		// 	}
 		// }
 		stories := fetchStories(&client, ids, numStories)
+
+		slices.SortFunc(stories, func(a, b item) int {
+			return cmp.Compare(a.ID, b.ID)
+		})
 
 		data := templateData{
 			Stories: stories,
