@@ -16,22 +16,25 @@ import (
 	"quiet-hn/hn"
 )
 
+var shouldFetch = true
+
 func main() {
 	// parse flags
-	var port, numStories int
+	var port, numStories, cacheTime int
 	flag.IntVar(&port, "port", 3000, "the port to start the web server on")
 	flag.IntVar(&numStories, "num_stories", 30, "the number of top stories to display")
+	flag.IntVar(&cacheTime, "cache_time", 5, "the number of minutes that stories will be cached")
 	flag.Parse()
 
 	tpl := template.Must(template.ParseFiles("./index.gohtml"))
 
-	http.HandleFunc("/", handler(numStories, tpl))
+	http.HandleFunc("/", handler(numStories, tpl, cacheTime))
 
 	// Start the server
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), nil))
 }
 
-func handler(numStories int, tpl *template.Template) http.HandlerFunc {
+func handler(numStories int, tpl *template.Template, cacheTime int) http.HandlerFunc {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		var client hn.Client
@@ -47,35 +50,34 @@ func handler(numStories int, tpl *template.Template) http.HandlerFunc {
 		// Spin up a goroutine that's checking a duration
 		// Once the duration is hit, flip the flag to false, which should allow a request to go through
 
-		// var stories []item
-		// for _, id := range ids {
-		// 	hnItem, err := client.GetItem(id)
-		// 	if err != nil {
-		// 		continue
-		// 	}
-		// 	item := parseHNItem(hnItem)
-		// 	if isStoryLink(item) {
-		// 		stories = append(stories, item)
-		// 		if len(stories) >= numStories {
-		// 			break
-		// 		}
-		// 	}
-		// }
-		unorderedStories := fetchStories(&client, ids)
-		slices.SortFunc(unorderedStories, func(a, b orderedItem) int {
-			return cmp.Compare(a.order, b.order)
-		})
+		var stories []item
 
-		var orderedItems []item
-		for _, story := range unorderedStories {
-			item := item{
-				story.Item,
-				story.Host,
+		if shouldFetch {
+			// stories := fetchStoriesSync(&client, ids, numStories)
+			shouldFetch = false
+			unorderedStories := fetchStoriesAsync(&client, ids)
+			slices.SortFunc(unorderedStories, func(a, b orderedItem) int {
+				return cmp.Compare(a.order, b.order)
+			})
+
+			var orderedItems []item
+			for _, story := range unorderedStories {
+				item := item{
+					story.Item,
+					story.Host,
+				}
+
+				orderedItems = append(orderedItems, item)
 			}
-
-			orderedItems = append(orderedItems, item)
+			stories = orderedItems[:numStories]
 		}
-		stories := orderedItems[:numStories]
+
+		// Flip bool after certain length of time
+		// cacheLength := time.Minute * time.Duration(cacheTime)
+		cacheLength := time.Second * time.Duration(15)
+		time.AfterFunc(cacheLength, func() {
+			shouldFetch = true
+		})
 
 		data := templateData{
 			Stories: stories,
@@ -131,7 +133,7 @@ func captureOrder(ids []int) map[int]int {
 // problem is that there is no clear time at which we should
 // terminate the channel due to the different speeds at which
 // stories can be parsed.
-func fetchStories(client *hn.Client, ids []int) []orderedItem {
+func fetchStoriesAsync(client *hn.Client, ids []int) []orderedItem {
 	order := captureOrder(ids)
 
 	var stories []orderedItem
@@ -157,6 +159,25 @@ func fetchStories(client *hn.Client, ids []int) []orderedItem {
 	}
 
 	wg.Wait()
+
+	return stories
+}
+
+func fetchStoriesSync(client *hn.Client, ids []int, numStories int) []item {
+	var stories []item
+	for _, id := range ids {
+		hnItem, err := client.GetItem(id)
+		if err != nil {
+			continue
+		}
+		item := parseHNItem(hnItem)
+		if isStoryLink(item) {
+			stories = append(stories, item)
+			if len(stories) >= numStories {
+				break
+			}
+		}
+	}
 
 	return stories
 }
