@@ -16,7 +16,10 @@ import (
 	"quiet-hn/hn"
 )
 
-var shouldFetch = true
+var (
+	shouldFetch   = true
+	cachedStories []item
+)
 
 func main() {
 	// parse flags
@@ -45,13 +48,7 @@ func handler(numStories int, tpl *template.Template, cacheTime int) http.Handler
 			return
 		}
 
-		// How might caching work?
-		// Set a bool flag for making requests - stop requests from going through
-		// Spin up a goroutine that's checking a duration
-		// Once the duration is hit, flip the flag to false, which should allow a request to go through
-
-		var stories []item
-
+		// Avoid unnecessary requests if time hasn't elapsed
 		if shouldFetch {
 			// stories := fetchStoriesSync(&client, ids, numStories)
 			shouldFetch = false
@@ -69,18 +66,16 @@ func handler(numStories int, tpl *template.Template, cacheTime int) http.Handler
 
 				orderedItems = append(orderedItems, item)
 			}
-			stories = orderedItems[:numStories]
+			cachedStories = orderedItems[:numStories]
 		}
 
-		// Flip bool after certain length of time
-		// cacheLength := time.Minute * time.Duration(cacheTime)
-		cacheLength := time.Second * time.Duration(15)
+		cacheLength := time.Minute * time.Duration(cacheTime)
 		time.AfterFunc(cacheLength, func() {
 			shouldFetch = true
 		})
 
 		data := templateData{
-			Stories: stories,
+			Stories: cachedStories,
 			Time:    time.Now().Sub(start),
 		}
 		err = tpl.Execute(w, data)
