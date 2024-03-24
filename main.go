@@ -127,9 +127,10 @@ func captureOrder(ids []int) map[int]int {
 	return orderMap
 }
 
-// The ids won't always be in the same order when provided
-// to this function. Need to create a new type in order to sort
-// by index
+// WaitGroups feel like overkill versus channels, but the
+// problem is that there is no clear time at which we should
+// terminate the channel due to the different speeds at which
+// stories can be parsed.
 func fetchStories(client *hn.Client, ids []int) []orderedItem {
 	order := captureOrder(ids)
 
