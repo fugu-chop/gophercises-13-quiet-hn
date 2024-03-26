@@ -48,11 +48,18 @@ func handler(numStories int, tpl *template.Template, cacheTime int) http.Handler
 			return
 		}
 
-		// Avoid unnecessary requests if time hasn't elapsed
 		if shouldFetch {
-			// stories := fetchStoriesSync(&client, ids, numStories)
 			shouldFetch = false
-			unorderedStories := fetchStoriesAsync(&client, ids)
+			startIdx := 0
+			endIdx := numStories * 5 / 4
+			unorderedStories := fetchStoriesAsync(&client, ids[startIdx:endIdx])
+
+			for len(unorderedStories) < numStories {
+				startIdx = endIdx
+				endIdx += numStories
+				unorderedStories = append(unorderedStories, fetchStoriesAsync(&client, ids[startIdx:endIdx])...)
+			}
+
 			slices.SortFunc(unorderedStories, func(a, b orderedItem) int {
 				return cmp.Compare(a.order, b.order)
 			})
