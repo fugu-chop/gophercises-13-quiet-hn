@@ -76,7 +76,7 @@ func handler(numStories int, tpl *template.Template, cacheTime int) http.Handler
 
 		data := templateData{
 			Stories: cachedStories,
-			Time:    time.Now().Sub(start),
+			Time:    time.Since(start),
 		}
 		err = tpl.Execute(w, data)
 		if err != nil {
@@ -154,25 +154,6 @@ func fetchStoriesAsync(client *hn.Client, ids []int) []orderedItem {
 	}
 
 	wg.Wait()
-
-	return stories
-}
-
-func fetchStoriesSync(client *hn.Client, ids []int, numStories int) []item {
-	var stories []item
-	for _, id := range ids {
-		hnItem, err := client.GetItem(id)
-		if err != nil {
-			continue
-		}
-		item := parseHNItem(hnItem)
-		if isStoryLink(item) {
-			stories = append(stories, item)
-			if len(stories) >= numStories {
-				break
-			}
-		}
-	}
 
 	return stories
 }
